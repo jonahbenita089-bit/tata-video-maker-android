@@ -1,5 +1,6 @@
 package com.tata.videomaker
 
+import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
@@ -38,6 +39,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -51,6 +53,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.tata.videomaker.ui.theme.TataVideoMakerTheme
+import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: android.os.Bundle?) {
@@ -228,6 +231,8 @@ data class ProjectCardData(
 fun CreateScreen(navController: NavController) {
     var prompt by remember { mutableStateOf("Create a cinematic ad for a smart home device") }
     var style by remember { mutableStateOf("Cinematic") }
+    var statusText by remember { mutableStateOf("") }
+    val scope = rememberCoroutineScope()
 
     Column(
         modifier = Modifier
@@ -274,11 +279,53 @@ fun CreateScreen(navController: NavController) {
         Spacer(modifier = Modifier.height(24.dp))
 
         Button(
-            onClick = { navController.navigate("chat") },
+            onClick = { statusText = "Generating via backend..." },
             modifier = Modifier.fillMaxWidth(),
             colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
         ) {
-            Text("Generate video")
+            Text("Generate (server)")
+        }
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        Button(
+            onClick = {
+                statusText = "Generating offline..."
+                scope.launch {
+                    val (ok, result) = VideoGenerator.generateOfflineVideo(
+                        context = navController.context,
+                        prompt = prompt,
+                        durationSeconds = 10,
+                        style = style
+                    )
+                    if (ok) {
+                        statusText = "Offline video generated: $result"
+                    } else {
+                        statusText = "Offline generation failed: ${result ?: "unknown"}"
+                    }
+                }
+            },
+            modifier = Modifier.fillMaxWidth(),
+            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary)
+        ) {
+            Text("Generate offline (local)")
+        }
+
+        Spacer(modifier = Modifier.height(24.dp))
+
+        if (statusText.isNotEmpty()) {
+            Surface(
+                color = MaterialTheme.colorScheme.surface,
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Box(modifier = Modifier.padding(12.dp)) {
+                    Text(
+                        text = statusText,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                }
+            }
         }
     }
 }
