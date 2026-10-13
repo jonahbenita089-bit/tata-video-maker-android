@@ -1,98 +1,71 @@
-# Tata Video Maker
+import re
+import shutil
+import subprocess
+from pathlib import Path
+from typing import Dict, Any
 
-Tata Video Maker is a free Android + backend app concept for generating AI videos from text prompts using a Hugging Face text-to-video model. The recommended architecture keeps the Android app lightweight and moves the actual AI rendering to a backend service so real video generation can work reliably.
 
-## Recommended architecture
+class LocalVideoService:
+    def __init__(self, output_dir: Path):
+        self.output_dir = output_dir
+        self.output_dir.mkdir(parents=True, exist_ok=True)
 
-- Android app: Kotlin + Jetpack Compose
-- Backend: Python + FastAPI
-- AI model: Hugging Face text-to-video model
-- Output: MP4 or frames returned to the Android app
-- Theme: black / dark UI
-- Monetization: none, free forever
+    @staticmethod
+    def _sanitize_filename(text: str) -> str:
+        text = text.strip().lower()
+        text = re.sub(r"[^a-z0-9]+", "-", text)
+        text = text.strip("-")
+        return text or "video"
 
-## Why this architecture
+    def generate_video(
+        self,
+        prompt: str,
+        duration_seconds: int = 15,
+        style: str = "cinematic",
+        aspect_ratio: str = "16:9",
+    ) -> Dict[str, Any]:
+        ffmpeg_path = shutil.which("ffmpeg")
+        if not ffmpeg_path:
+            return {
+                "success": False,
+                "error": "ffmpeg not installed. Please install ffmpeg to generate local MP4 output.",
+            }
 
-A commercial-quality text-to-video model is usually too large and too resource-heavy to run directly on a mobile device. The best approach is:
+        prompt_clean = self._sanitize_filename(prompt)
+        file_name = f"{prompt_clean}-{duration_seconds}s.mp4"
+        output_path = self.output_dir / file_name
 
-1. Android app handles the UI and user flow.
-2. Backend receives the script or prompt.
-3. Backend calls Hugging Face text-to-video model.
-4. Backend returns generated video or rendered frames.
-5. Android app shows project previews and exports the final video.
+        # Generate a real MP4 using ffmpeg with a color background and text overlay.
+        # This creates a valid MP4 file immediately and works without any paid API.
+        ffmpeg_cmd = [
+            ffmpeg_path,
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            f"color=c=#050505:s=1280x720:d={duration_seconds}",
+            "-vf",
+            f"drawtext=fontcolor=white:fontsize=42:text='{style.upper()} | {prompt[:60]}':x=(w-text_w)/2:y=(h-text_h)/2",
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+            "-t",
+            str(duration_seconds),
+            str(output_path),
+        ]
 
-## Included in this repo
-
-- `android-app/` — Jetpack Compose starter app with black theme and screens:
-  - Projects
-  - Menu
-  - Settings
-  - Create
-  - New Chat
-- `backend/` — FastAPI service that is ready to integrate with a Hugging Face text-to-video model.
-- `README.md` — setup and usage guide
-
-## App flow
-
-- User opens the app.
-- Creates or selects a project.
-- Uses New Chat to write a prompt or script.
-- Prefers assistant-generated storyboard scene list.
-- Hits Create and sends data to backend.
-- Backend calls the model.
-- Output video is downloaded and shown in the project preview.
-- User can export the video or continue editing.
-
-## Backend setup
-
-```bash
-cd backend
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
-```
-
-Set environment variables:
-
-```bash
-export HF_TOKEN=your_huggingface_token
-export HF_TEXT_TO_VIDEO_MODEL=your-text-to-video-model
-```
-
-The model name should be a valid Hugging Face text-to-video model from the list at:
-https://huggingface.co/models?pipeline_tag=text-to-video
-
-## Android app setup
-
-Open the `android-app/` folder in Android Studio and sync Gradle. The app is a starter UI only; it connects to the backend through a service layer you can add later.
-
-## Black theme design tokens
-
-- Background: `#050505`
-- Surface: `#111111`
-- Card: `#181818`
-- Accent: `#00B7FF`
-- Secondary accent: `#00D5A3`
-- Text: `#FFFFFF`, `#BDBDBD`
-
-## No-payment approach
-
-- No subscriptions
-- No upgrade flow
-- No billing screen
-- Free usage model by design
-- Actual AI generation depends on the selected Hugging Face model and backend hosting costs
-
-## Notes
-
-This repo is intentionally a strong starter foundation rather than a complete production app. The backend service includes a mock/fallback mode when no model token is configured, which lets the project run safely during local development without billing or lock-in.
-
-## Next steps
-
-- Connect the Android UI to the backend generation endpoint.
-- Add start/render progress indicators.
-- Store project metadata and generated outputs locally.
-- Add a proper AI assistant prompt pipeline with scene generation.
-- Replace the mock backend with real model inference for your chosen model.
-
+        try:
+            subprocess.run(ffmpeg_cmd, check=True, capture_output=True, text=True)
+            return {
+                "success": True,
+                "file_name": file_name,
+                "output_path": str(output_path),
+                "message": "MP4 generated locally successfully.",
+            }
+        except subprocess.CalledProcessError as exc:
+            return {
+                "success": False,
+                "error": "FFmpeg failed to generate output.",
+                "stderr": exc.stderr,
+            }
