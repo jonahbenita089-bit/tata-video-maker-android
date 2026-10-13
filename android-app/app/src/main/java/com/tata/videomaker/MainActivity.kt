@@ -1,5 +1,9 @@
 package com.tata.videomaker
 
+import android.app.Activity
+import android.content.ComponentName
+import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -21,7 +25,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Home
-import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Message
 import androidx.compose.material.icons.filled.Settings
@@ -43,20 +46,20 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.navigation.NavController
-import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.tata.videomaker.ui.theme.TataVideoMakerTheme
 import kotlinx.coroutines.launch
+import java.io.File
 
 class MainActivity : ComponentActivity() {
-    override fun onCreate(savedInstanceState: android.os.Bundle?) {
+    override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
             TataVideoMakerTheme {
@@ -72,9 +75,7 @@ fun TataVideoMakerApp() {
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
-        bottomBar = {
-            AppBottomNavigation(navController)
-        }
+        bottomBar = { AppBottomNavigation(navController) }
     ) { paddingValues ->
         NavHost(
             navController = navController,
@@ -97,7 +98,7 @@ fun AppBottomNavigation(navController: NavController) {
         BottomNavItem("Create", "create", Icons.Default.Add),
         BottomNavItem("Chat", "chat", Icons.Default.Message),
         BottomNavItem("Settings", "settings", Icons.Default.Settings),
-        BottomNavItem("Menu", "menu", Icons.Default.Menu),
+        BottomNavItem("Menu", "menu", Icons.Default.Menu)
     )
 
     Surface(
@@ -139,7 +140,7 @@ fun AppBottomNavigation(navController: NavController) {
 data class BottomNavItem(
     val label: String,
     val route: String,
-    val icon: androidx.compose.ui.graphics.vector.ImageVector,
+    val icon: androidx.compose.ui.graphics.vector.ImageVector
 )
 
 @Composable
@@ -224,7 +225,7 @@ fun ProjectsScreen(navController: NavController) {
 data class ProjectCardData(
     val title: String,
     val updated: String,
-    val status: String,
+    val status: String
 )
 
 @Composable
@@ -232,6 +233,8 @@ fun CreateScreen(navController: NavController) {
     var prompt by remember { mutableStateOf("Create a cinematic ad for a smart home device") }
     var style by remember { mutableStateOf("Cinematic") }
     var statusText by remember { mutableStateOf("") }
+    var generatedVideoPath by remember { mutableStateOf<String?>(null) }
+    val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
     Column(
@@ -258,9 +261,7 @@ fun CreateScreen(navController: NavController) {
         )
 
         Spacer(modifier = Modifier.height(12.dp))
-
         Text("Style: $style", color = MaterialTheme.colorScheme.onBackground)
-
         Spacer(modifier = Modifier.height(12.dp))
 
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -279,36 +280,64 @@ fun CreateScreen(navController: NavController) {
         Spacer(modifier = Modifier.height(24.dp))
 
         Button(
-            onClick = { statusText = "Generating via backend..." },
-            modifier = Modifier.fillMaxWidth(),
-            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
-        ) {
-            Text("Generate (server)")
-        }
-
-        Spacer(modifier = Modifier.height(12.dp))
-
-        Button(
             onClick = {
                 statusText = "Generating offline..."
                 scope.launch {
                     val (ok, result) = VideoGenerator.generateOfflineVideo(
-                        context = navController.context,
+                        context = context,
                         prompt = prompt,
                         durationSeconds = 10,
                         style = style
                     )
-                    if (ok) {
+                    if (ok && result != null) {
+                        generatedVideoPath = result
                         statusText = "Offline video generated: $result"
                     } else {
+                        generatedVideoPath = null
                         statusText = "Offline generation failed: ${result ?: "unknown"}"
                     }
                 }
             },
             modifier = Modifier.fillMaxWidth(),
-            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary)
+            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
         ) {
             Text("Generate offline (local)")
+        }
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        if (generatedVideoPath != null) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Button(
+                    onClick = {
+                        val intent = Intent(context, VideoPreviewActivity::class.java).apply {
+                            putExtra("video_path", "file://${File(generatedVideoPath!!).absolutePath}")
+                        }
+                        context.startActivity(intent)
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary)
+                ) {
+                    Text("Preview")
+                }
+
+                Button(
+                    onClick = {
+                        val file = File(generatedVideoPath!!)
+                        val saveResult = VideoGalleryHelper.saveVideoToGallery(context, file)
+                        statusText = if (saveResult.isSuccess) {
+                            "Saved to gallery: ${saveResult.getOrNull()}"
+                        } else {
+                            "Could not save to gallery: ${saveResult.exceptionOrNull()?.message}"
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                ) {
+                    Text("Save")
+                }
+            }
         }
 
         Spacer(modifier = Modifier.height(24.dp))
@@ -320,10 +349,7 @@ fun CreateScreen(navController: NavController) {
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Box(modifier = Modifier.padding(12.dp)) {
-                    Text(
-                        text = statusText,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
+                    Text(text = statusText, color = MaterialTheme.colorScheme.onSurface)
                 }
             }
         }
@@ -388,7 +414,7 @@ fun ChatScreen(navController: NavController) {
 
 data class ChatMessage(
     val sender: String,
-    val text: String,
+    val text: String
 )
 
 @Composable
@@ -407,16 +433,7 @@ fun SettingsScreen(navController: NavController) {
         )
         Spacer(modifier = Modifier.height(16.dp))
 
-        val settings = listOf(
-            "General",
-            "Dark mode",
-            "AI model",
-            "Storage",
-            "Privacy",
-            "Export",
-            "Help"
-        )
-
+        val settings = listOf("General", "Dark mode", "AI model", "Storage", "Privacy", "Export", "Help")
         settings.forEach { item ->
             Box(
                 modifier = Modifier
