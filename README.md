@@ -1,19 +1,35 @@
-# Tata Motion Studio (Android)
+# Tata Motion Studio
 
-An Android motion-graphics video maker prototype built with Kotlin and Jetpack Compose. Describe a video, attach an image or logo, generate an editable scene-plan script with the assistant UI, and render an MP4 locally.
+Android motion-graphics video maker built with Kotlin/Jetpack Compose and a FastAPI backend. Describe a video, attach a graphic, chat with the Gemini assistant, and render an MP4 locally.
 
-## Current features
+## Enable Gemini assistant
 
-- Compose-based mobile creation screen with prompt, visual styles, duration, and assistant chat.
-- Image picker for a graphic/logo; the selected image is composited into the video poster.
-- Editable constrained scene-plan code with a simple revise-by-chat interaction.
-- On-device MP4 rendering through FFmpegKit, with a slow zoom effect and Android text-to-speech narration.
-- Preview and save-to-gallery actions using the existing project helpers.
+1. In `backend`, install dependencies and start the API:
 
-## Build and run
+   ```bash
+   python -m venv .venv
+   source .venv/bin/activate  # Windows: .venv\\Scripts\\activate
+   pip install -r requirements.txt
+   ```
 
-Open `android-app` in Android Studio and run the app on an Android device or emulator. The Android SDK and configured Gradle dependencies are required. FFmpegKit and device TTS availability can vary by device/Android version.
+2. Set the key only in the backend environment (never in Android code or the repository):
 
-## Important prototype note
+   ```bash
+   export GEMINI_API_KEY="your-key"
+   export GEMINI_MODEL="gemini-2.5-flash"  # optional; this is the default
+   uvicorn app.main:app --host 0.0.0.0 --port 8000
+   ```
 
-The current assistant screen produces a structured starter scene plan locally; it is not connected to a hosted language model yet. It does not execute arbitrary generated code. The local renderer currently creates a graphic-backed title video with a subtle zoom and narration; the scene plan is editable but is not yet a full timeline renderer. A model provider and scene-to-render compiler can be added behind the assistant API in a subsequent step.
+   On Windows PowerShell, use `$env:GEMINI_API_KEY="your-key"` before running Uvicorn. For deployment, configure `GEMINI_API_KEY` as a secret in the hosting provider's environment settings.
+
+3. Open `android-app` in Android Studio and run on an emulator. The default development API URL is `http://10.0.2.2:8000`. For a physical device or deployed HTTPS backend, set the Gradle property `API_BASE_URL`, for example `-PAPI_BASE_URL=https://your-api.example.com`.
+
+The app's `/api/assistant/chat` endpoint sends recent conversation turns to Gemini. If the key is missing, the backend reports that setup is required; it does not silently pretend a local reply is AI-generated. The Android app keeps the key on the server.
+
+## Video generation
+
+The existing Hugging Face video endpoint is retained. Configure `HF_TOKEN` and `HF_TEXT_TO_VIDEO_MODEL` in the backend if using it. Local FFmpeg rendering remains a separate on-device fallback.
+
+## Security note
+
+Do not commit `.env` files or API keys. Use HTTPS for any deployed backend. Cleartext HTTP is enabled in the Android manifest for local emulator development; remove it and use HTTPS for production builds.

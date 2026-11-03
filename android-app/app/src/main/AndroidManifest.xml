@@ -6,7 +6,8 @@
         android:label="Tata Motion Studio"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
-        android:theme="@style/Theme.TataVideoMaker">
+        android:theme="@style/Theme.TataVideoMaker"
+        android:usesCleartextTraffic="true">
         <activity
             android:name=".MainActivity"
             android:exported="true">
