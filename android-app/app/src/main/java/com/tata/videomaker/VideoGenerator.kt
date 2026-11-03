@@ -19,6 +19,28 @@ import java.util.concurrent.CountDownLatch
 
 object VideoGenerator {
 
+    fun buildAssistantScript(prompt: String, style: String, durationSeconds: Int = 12): String {
+        val safePrompt = prompt.trim().ifEmpty { "Create a modern product reveal" }
+        val safeStyle = style.trim().ifEmpty { "Cinematic" }
+        return """
+        // AI-generated motion graphics script
+        export default function buildScene() {
+          return {
+            prompt: "$safePrompt",
+            style: "$safeStyle",
+            duration: $durationSeconds,
+            shots: [
+              { at: 0, action: "fadeInBackground" },
+              { at: 1.5, action: "zoomInLogo" },
+              { at: 3.5, action: "animateTextReveal" },
+              { at: 7.5, action: "showProductDetail" },
+              { at: 10.0, action: "finalBrandLockup" }
+            ]
+          };
+        }
+        """.trimIndent()
+    }
+
     private fun createBitmapWithText(text: String, width: Int = 1280, height: Int = 720): Bitmap {
         val bmp = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bmp)
@@ -26,15 +48,13 @@ object VideoGenerator {
 
         val paint = Paint(Paint.ANTI_ALIAS_FLAG)
         paint.color = Color.WHITE
-        paint.textSize = 48f
+        paint.textSize = 52f
         paint.textAlign = Paint.Align.LEFT
 
         val padding = 80f
         val x = padding
         var y = height / 2f
-
-        // Simple multi-line wrap
-        val lines = wrapText(text, 36)
+        val lines = wrapText(text, 28)
         val lineHeight = paint.fontSpacing
         y -= (lines.size - 1) * lineHeight / 2
 
@@ -72,7 +92,7 @@ object VideoGenerator {
     suspend fun generateOfflineVideo(
         context: Context,
         prompt: String,
-        durationSeconds: Int = 10,
+        durationSeconds: Int = 12,
         style: String = "Cinematic",
     ): Pair<Boolean, String?> {
         return withContext(Dispatchers.IO) {
@@ -80,16 +100,14 @@ object VideoGenerator {
                 val outDir = File(context.filesDir, "generated_videos")
                 if (!outDir.exists()) outDir.mkdirs()
 
-                val safeName = sanitizeFilename(prompt)
+                val safeName = sanitizeFilename("${style.lowercase()}-${prompt}")
                 val imageFile = File(outDir, "${safeName}.png")
                 val audioFile = File(outDir, "${safeName}.wav")
                 val outFile = File(outDir, "${safeName}-${durationSeconds}s.mp4")
 
-                // Create bitmap image with prompt text
                 val bmp = createBitmapWithText("${style.uppercase()}\n$prompt")
                 saveBitmapToFile(bmp, imageFile)
 
-                // Generate speech audio using TextToSpeech (blocking until complete)
                 val latch = CountDownLatch(1)
                 val tts = TextToSpeech(context) { status ->
                     if (status == TextToSpeech.SUCCESS) {
@@ -103,11 +121,9 @@ object VideoGenerator {
                             override fun onError(utteranceId: String) { latch.countDown() }
                         })
 
-                        // synthesizeToFile signature: (CharSequence, Bundle, File, String)
                         try {
                             tts.synthesizeToFile(prompt, params, audioFile, "utt1")
-                        } catch (ex: Exception) {
-                            // some Android versions require the older HashMap API, attempt fallback
+                        } catch (_: Exception) {
                             try {
                                 @Suppress("DEPRECATION")
                                 val map = HashMap<String, String>()
@@ -118,7 +134,6 @@ object VideoGenerator {
                                 latch.countDown()
                             }
                         }
-
                     } else {
                         latch.countDown()
                     }
@@ -127,9 +142,6 @@ object VideoGenerator {
                 latch.await()
                 try { tts.shutdown() } catch (_: Exception) {}
 
-                // Use FFmpegKit to combine image (looped) and audio into mp4
-                // Command: loop image, set duration, add audio, encode
-                // -loop 1 -i image.png -i audio.wav -c:v libx264 -t <duration> -pix_fmt yuv420p -c:a aac -shortest out.mp4
                 val cmd = listOf(
                     "-y",
                     "-loop", "1",
@@ -143,18 +155,15 @@ object VideoGenerator {
                     outFile.absolutePath
                 ).joinToString(" ")
 
-                // Increase FFmpeg logging folder so library loads native libraries properly
                 FFmpegKitConfig.setLogLevel(com.arthenica.ffmpegkit.LogLevel.AV_LOG_INFO)
-
                 val session = FFmpegKit.execute(cmd)
                 val returnCode = session.returnCode
+
                 if (returnCode.isValueSuccess) {
                     Pair(true, outFile.absolutePath)
                 } else {
-                    val fail = session.failStackTrace ?: "Unknown ffmpeg error"
-                    Pair(false, "FFmpeg failed: $fail")
+                    Pair(false, session.failStackTrace ?: "Unknown ffmpeg error")
                 }
-
             } catch (ex: Exception) {
                 Pair(false, ex.message)
             }
