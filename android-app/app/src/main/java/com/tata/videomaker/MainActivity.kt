@@ -52,18 +52,14 @@ import java.io.File
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContent {
-            TataVideoMakerTheme {
-                PremiumMotionStudioScreen()
-            }
-        }
+        setContent { TataVideoMakerTheme { MotionStudioScreen() } }
     }
 }
 
 private data class AssistantMessage(val role: String, val text: String)
 
 @Composable
-private fun PremiumMotionStudioScreen() {
+private fun MotionStudioScreen() {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var prompt by remember { mutableStateOf("Create a cinematic product teaser with glowing logo, modern typography, and a premium reveal") }
@@ -73,239 +69,141 @@ private fun PremiumMotionStudioScreen() {
     var imageUri by remember { mutableStateOf<Uri?>(null) }
     var videoPath by remember { mutableStateOf<String?>(null) }
     var chatInput by remember { mutableStateOf("") }
-    var status by remember { mutableStateOf("Ready to design your next short video.") }
-
-    val messages = remember {
-        mutableStateListOf(
-            AssistantMessage("Assistant", "I’ll turn your concept into a motion scene plan, then render it to MP4 on-device."),
-            AssistantMessage("User", "Create a modern product reveal for a smart speaker with neon accents."),
-            AssistantMessage("Assistant", "Scene plan generated: opening reveal, logo intro, product close-up, title animation, final brand lockup.")
-        )
-    }
-
+    var status by remember { mutableStateOf("Ready. Connect the backend and Gemini key to chat with the AI assistant.") }
+    var isSending by remember { mutableStateOf(false) }
+    var isRendering by remember { mutableStateOf(false) }
+    val messages = remember { mutableStateListOf(AssistantMessage("Assistant", "Hi! Describe your video or ask for an edit. Messages are sent to Gemini through your configured backend.")) }
     val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) {
             imageUri = uri
+            try { context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) } catch (_: Exception) { }
+            status = "Graphic attached: ${uri.lastPathSegment ?: "image"}"
+        }
+    }
+    val duration = (durationText.toIntOrNull() ?: 12).coerceIn(3, 30)
+
+    fun sendToAssistant(text: String, requestScenePlan: Boolean = false) {
+        val cleanText = text.trim()
+        if (cleanText.isEmpty() || isSending) return
+        messages.add(AssistantMessage("user", cleanText))
+        chatInput = ""
+        isSending = true
+        status = "Waiting for Gemini…"
+        val history = messages.map { AssistantTurn(it.role, it.text) }
+        scope.launch {
             try {
-                context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            } catch (_: Exception) { }
-            status = "Graphic selected: ${uri.lastPathSegment ?: "image"}"
+                val answer = AssistantApi.reply(history)
+                messages.add(AssistantMessage("Assistant", answer))
+                if (requestScenePlan) sceneScript = answer
+                status = if (requestScenePlan) "AI scene plan generated. Review and edit it before rendering." else "Gemini replied."
+            } catch (error: Exception) {
+                val detail = error.message ?: "Could not reach the assistant backend."
+                messages.add(AssistantMessage("Assistant", "I couldn't respond: $detail"))
+                status = detail
+            } finally {
+                isSending = false
+            }
         }
     }
 
-    val duration = (durationText.toIntOrNull() ?: 12).coerceIn(3, 30)
-
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(
-                Brush.verticalGradient(
-                    listOf(
-                        Color(0xFF090B14),
-                        Color(0xFF0F172A),
-                        Color(0xFF111827)
-                    )
-                )
-            )
-    ) {
+    Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color(0xFF090B14), Color(0xFF0F172A), Color(0xFF111827))))) {
         Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = 18.dp, vertical = 22.dp),
+            Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 18.dp, vertical = 22.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 Column {
                     Text("Tata Motion Studio", style = MaterialTheme.typography.headlineMedium, color = MaterialTheme.colorScheme.onBackground)
-                    Text("AI scene writing + MP4 export", color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.72f), style = MaterialTheme.typography.bodyMedium)
+                    Text("AI scene writing + MP4 export", color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.72f))
                 }
-                Box(
-                    modifier = Modifier
-                        .size(42.dp)
-                        .clip(CircleShape)
-                        .background(Brush.linearGradient(listOf(MaterialTheme.colorScheme.primary, MaterialTheme.colorScheme.secondary))),
-                    contentAlignment = Alignment.Center
-                ) {
+                Box(Modifier.size(42.dp).clip(CircleShape).background(Brush.linearGradient(listOf(MaterialTheme.colorScheme.primary, MaterialTheme.colorScheme.secondary))), contentAlignment = Alignment.Center) {
                     Text("AI", color = Color.White, fontWeight = FontWeight.Bold)
                 }
             }
 
-            Card(
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f)),
-                shape = RoundedCornerShape(22.dp)
-            ) {
-                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text("Video brief", style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.onSurface)
-                    OutlinedTextField(
-                        value = prompt,
-                        onValueChange = { prompt = it },
-                        modifier = Modifier.fillMaxWidth(),
-                        minLines = 4,
-                        maxLines = 6,
-                        label = { Text("Describe your animation") }
-                    )
-
-                    OutlinedTextField(
-                        value = durationText,
-                        onValueChange = { durationText = it.filter(Char::isDigit).take(2) },
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true,
-                        label = { Text("Duration (seconds)") }
-                    )
-
-                    Text("Style", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface)
+            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.96f)), shape = RoundedCornerShape(22.dp)) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text("Video brief", style = MaterialTheme.typography.titleLarge)
+                    OutlinedTextField(value = prompt, onValueChange = { prompt = it }, modifier = Modifier.fillMaxWidth(), minLines = 3, maxLines = 5, label = { Text("Describe your animation") })
+                    OutlinedTextField(value = durationText, onValueChange = { durationText = it.filter(Char::isDigit).take(2) }, modifier = Modifier.fillMaxWidth(), singleLine = true, label = { Text("Duration (3–30 seconds)") })
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         listOf("Cinematic", "Neon", "Minimal", "Luxury").forEach { option ->
-                            Button(
-                                onClick = { style = option },
-                                colors = ButtonDefaults.buttonColors(
-                                    containerColor = if (style == option) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant
-                                )
-                            ) {
-                                Text(option)
-                            }
+                            Button(onClick = { style = option }, colors = ButtonDefaults.buttonColors(containerColor = if (style == option) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant)) { Text(option) }
                         }
                     }
-
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Button(onClick = { imagePicker.launch(arrayOf("image/*")) }, modifier = Modifier.weight(1f)) {
-                            Text(if (imageUri == null) "Attach graphic" else "Replace graphic")
-                        }
-                        Button(onClick = {
-                            if (prompt.isBlank()) {
-                                status = "Write a brief before generating the scene."
-                            } else {
-                                sceneScript = VideoGenerator.buildAssistantScript(prompt, style, duration)
-                                messages.add(AssistantMessage("You", prompt))
-                                messages.add(AssistantMessage("Assistant", "Scene plan written: opening reveal, graphic motion, emphasis shot, and closing frame."))
-                                status = "Scene plan generated."
-                            }
-                        }, modifier = Modifier.weight(1f), colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)) {
-                            Text("Generate plan")
-                        }
+                        Button(onClick = { imagePicker.launch(arrayOf("image/*")) }, modifier = Modifier.weight(1f)) { Text(if (imageUri == null) "Attach graphic" else "Change graphic") }
+                        Button(
+                            onClick = { sendToAssistant("Create a concise, editable motion-graphics scene plan for a ${duration}-second $style video. Brief: $prompt. Include timed scenes and visual actions; return plain text, not executable code.", requestScenePlan = true) },
+                            modifier = Modifier.weight(1f), enabled = !isSending,
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                        ) { Text(if (isSending) "Planning…" else "Ask Gemini for plan") }
                     }
+                    if (imageUri != null) Text("Attached: ${imageUri?.lastPathSegment ?: "graphic"}", style = MaterialTheme.typography.bodyMedium)
                 }
             }
 
-            Card(
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f)),
-                shape = RoundedCornerShape(22.dp)
-            ) {
-                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text("Scene script", style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.onSurface)
-                    OutlinedTextField(
-                        value = sceneScript,
-                        onValueChange = { sceneScript = it },
-                        modifier = Modifier.fillMaxWidth(),
-                        minLines = 8,
-                        maxLines = 15,
-                        label = { Text("Editable motion plan") }
-                    )
+            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.96f)), shape = RoundedCornerShape(22.dp)) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text("Editable scene plan", style = MaterialTheme.typography.titleLarge)
+                    OutlinedTextField(value = sceneScript, onValueChange = { sceneScript = it }, modifier = Modifier.fillMaxWidth(), minLines = 6, maxLines = 12)
                 }
             }
 
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                Button(
-                    onClick = {
-                        if (prompt.isBlank()) {
-                            status = "Describe the video before rendering."
-                            return@Button
-                        }
+            Button(
+                onClick = {
+                    if (prompt.isBlank()) { status = "Describe the video before rendering." }
+                    else {
+                        isRendering = true
                         status = "Rendering MP4…"
                         scope.launch {
-                            val (success, result) = VideoGenerator.generateOfflineVideo(
-                                context = context,
-                                prompt = prompt,
-                                durationSeconds = duration,
-                                style = style,
-                                graphicUri = imageUri?.toString()
-                            )
-                            if (success && result != null) {
-                                videoPath = result
-                                messages.add(AssistantMessage("Assistant", "Video exported successfully. Preview or save it to your gallery."))
-                                status = "Render complete."
-                            } else {
-                                videoPath = null
-                                status = "Render failed: ${result ?: "unknown error"}"
-                            }
+                            val (success, result) = VideoGenerator.generateOfflineVideo(context, prompt, duration, style)
+                            if (success && result != null) { videoPath = result; status = "Render complete. Preview or save your video." }
+                            else status = "Render failed: ${result ?: "unknown error"}"
+                            isRendering = false
                         }
-                    },
-                    modifier = Modifier.weight(1f),
-                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
-                ) {
-                    Text("Render MP4")
-                }
-                Button(
-                    onClick = { if (videoPath != null) { val playIntent = Intent(Intent.ACTION_VIEW).apply { setDataAndType(Uri.fromFile(File(videoPath!!)), "video/mp4"); addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION) }; context.startActivity(playIntent) } },
-                    modifier = Modifier.weight(1f),
-                    enabled = videoPath != null,
-                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary)
-                ) {
-                    Text("Preview")
+                    }
+                }, modifier = Modifier.fillMaxWidth(), enabled = !isRendering,
+                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+            ) { Text(if (isRendering) "Rendering…" else "Render MP4") }
+
+            if (videoPath != null) {
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Button(onClick = {
+                        try {
+                            context.startActivity(Intent(Intent.ACTION_VIEW).apply { setDataAndType(Uri.fromFile(File(videoPath!!)), "video/mp4"); addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION) })
+                        } catch (_: Exception) { status = "No video player is installed." }
+                    }, modifier = Modifier.weight(1f)) { Text("Preview") }
+                    Button(onClick = {
+                        val result = VideoGalleryHelper.saveVideoToGallery(context, File(videoPath!!))
+                        status = if (result.isSuccess) "Saved to gallery." else "Could not save: ${result.exceptionOrNull()?.message ?: "unknown error"}"
+                    }, modifier = Modifier.weight(1f), colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary)) { Text("Save video") }
                 }
             }
 
-            Card(
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f)),
-                shape = RoundedCornerShape(22.dp)
-            ) {
-                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text("Assistant chat", style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.onSurface)
-                    messages.takeLast(5).forEach { msg ->
-                        Surface(
-                            color = if (msg.role == "Assistant") MaterialTheme.colorScheme.primary.copy(alpha = 0.12f) else MaterialTheme.colorScheme.secondary.copy(alpha = 0.12f),
-                            shape = RoundedCornerShape(14.dp),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Column(modifier = Modifier.padding(12.dp)) {
-                                Text(msg.role, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
-                                Spacer(modifier = Modifier.height(4.dp))
-                                Text(msg.text, style = MaterialTheme.typography.bodyMedium)
+            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.96f)), shape = RoundedCornerShape(22.dp)) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text("Gemini assistant", style = MaterialTheme.typography.titleLarge)
+                    messages.takeLast(8).forEach { message ->
+                        Surface(color = if (message.role == "Assistant") MaterialTheme.colorScheme.primary.copy(alpha = 0.12f) else MaterialTheme.colorScheme.secondary.copy(alpha = 0.12f), shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth()) {
+                            Column(Modifier.padding(12.dp)) {
+                                Text(if (message.role == "user") "You" else "Assistant", fontWeight = FontWeight.Bold)
+                                Spacer(Modifier.height(4.dp))
+                                Text(message.text, style = MaterialTheme.typography.bodyMedium)
                             }
                         }
                     }
-
-                    OutlinedTextField(
-                        value = chatInput,
-                        onValueChange = { chatInput = it },
-                        modifier = Modifier.fillMaxWidth(),
-                        label = { Text("Ask for a revision") }
-                    )
-                    Button(
-                        onClick = {
-                            val input = chatInput.trim()
-                            if (input.isNotEmpty()) {
-                                messages.add(AssistantMessage("You", input))
-                                sceneScript = "$sceneScript\n// Revision: $input"
-                                messages.add(AssistantMessage("Assistant", "Revision added. Review the scene script before export."))
-                                chatInput = ""
-                                status = "Revision added to the scene script."
-                            }
-                        },
-                        modifier = Modifier.fillMaxWidth(),
-                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.tertiary)
-                    ) {
-                        Text("Apply edit")
+                    OutlinedTextField(value = chatInput, onValueChange = { chatInput = it }, modifier = Modifier.fillMaxWidth(), label = { Text("Ask the AI to revise your video") }, enabled = !isSending)
+                    Button(onClick = { sendToAssistant(chatInput) }, modifier = Modifier.fillMaxWidth(), enabled = !isSending && chatInput.isNotBlank(), colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.tertiary)) {
+                        Text(if (isSending) "Thinking…" else "Send to Gemini")
                     }
                 }
             }
 
-            Surface(
-                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
-                shape = RoundedCornerShape(16.dp),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text(
-                    text = status,
-                    modifier = Modifier.padding(14.dp),
-                    color = MaterialTheme.colorScheme.onSurface
-                )
+            Surface(color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f), shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth()) {
+                Text(status, modifier = Modifier.padding(14.dp), color = MaterialTheme.colorScheme.onSurface)
             }
+            Spacer(Modifier.height(8.dp))
         }
     }
 }

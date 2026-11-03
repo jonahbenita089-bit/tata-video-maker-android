@@ -14,7 +14,6 @@ android {
         targetSdk = 34
         versionCode = 1
         versionName = "1.0"
-
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables { useSupportLibrary = true }
         val apiBaseUrl = project.findProperty("API_BASE_URL")?.toString() ?: "http://10.0.2.2:8000"
@@ -52,7 +51,7 @@ dependencies {
     implementation("androidx.compose.ui:ui-tooling-preview")
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.material:material-icons-extended")
-    implementation("com.arthenica.ffmpeg-kit-full:4.5.LTS")
+    implementation("com.arthenica:ffmpeg-kit-full:4.5.LTS")
     debugImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation("androidx.compose.ui:ui-test-manifest")
 }
