@@ -2,9 +2,11 @@ package com.tata.videomaker
 
 import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
+import android.net.Uri
 import android.os.Bundle
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
@@ -18,65 +20,76 @@ import java.util.Locale
 import java.util.concurrent.CountDownLatch
 
 object VideoGenerator {
-
     fun buildAssistantScript(prompt: String, style: String, durationSeconds: Int = 12): String {
-        val safePrompt = prompt.trim().ifEmpty { "Create a modern product reveal" }
+        val safePrompt = prompt.trim().replace("\"", "'").ifEmpty { "Create a modern product reveal" }
         val safeStyle = style.trim().ifEmpty { "Cinematic" }
+        val shot1 = durationSeconds / 4
+        val shot2 = durationSeconds / 3
+        val shot3 = durationSeconds / 4
         return """
-        // AI-generated motion graphics script
-        export default function buildScene() {
-          return {
-            prompt: "$safePrompt",
-            style: "$safeStyle",
-            duration: $durationSeconds,
-            shots: [
-              { at: 0, action: "fadeInBackground" },
-              { at: 1.5, action: "zoomInLogo" },
-              { at: 3.5, action: "animateTextReveal" },
-              { at: 7.5, action: "showProductDetail" },
-              { at: 10.0, action: "finalBrandLockup" }
-            ]
-          };
-        }
+            // Motion scene plan — edit the actions and timings before rendering.
+            export default {
+              prompt: "$safePrompt",
+              style: "$safeStyle",
+              durationSeconds: $durationSeconds,
+              scenes: [
+                { start: 0, duration: $shot1, action: "Fade in background; slowly reveal the graphic." },
+                { start: $shot1, duration: $shot2, action: "Animate logo and title with $safeStyle motion." },
+                { start: ${shot1 + shot2}, duration: $shot3, action: "Emphasize the product or key message." },
+                { start: ${shot1 + shot2 + shot3}, duration: ${durationSeconds - shot1 - shot2 - shot3}, action: "Fade to a branded closing frame." }
+              ]
+            };
         """.trimIndent()
     }
 
-    private fun createBitmapWithText(text: String, width: Int = 1280, height: Int = 720): Bitmap {
+    private fun createBitmapWithText(text: String, graphic: Bitmap?, width: Int = 1280, height: Int = 720): Bitmap {
         val bmp = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bmp)
-        canvas.drawColor(Color.parseColor("#050505"))
+        canvas.drawColor(Color.parseColor("#080C18"))
+        val graphicBottom = if (graphic != null) height * 0.68f else height * 0.42f
 
-        val paint = Paint(Paint.ANTI_ALIAS_FLAG)
-        paint.color = Color.WHITE
-        paint.textSize = 52f
-        paint.textAlign = Paint.Align.LEFT
-
-        val padding = 80f
-        val x = padding
-        var y = height / 2f
-        val lines = wrapText(text, 28)
-        val lineHeight = paint.fontSpacing
-        y -= (lines.size - 1) * lineHeight / 2
-
-        for (line in lines) {
-            canvas.drawText(line, x, y, paint)
-            y += lineHeight
+        if (graphic != null) {
+            val maxW = width * 0.72f
+            val maxH = height * 0.55f
+            val scale = minOf(maxW / graphic.width, maxH / graphic.height)
+            val drawW = graphic.width * scale
+            val drawH = graphic.height * scale
+            val dst = android.graphics.RectF(
+                (width - drawW) / 2f,
+                (height * 0.08f) + (maxH - drawH) / 2f,
+                (width + drawW) / 2f,
+                (height * 0.08f) + (maxH + drawH) / 2f
+            )
+            val glow = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE; alpha = 245 }
+            canvas.drawBitmap(graphic, null, dst, glow)
         }
 
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.WHITE
+            textSize = 46f
+            textAlign = Paint.Align.CENTER
+            setShadowLayer(10f, 0f, 2f, Color.rgb(80, 120, 255))
+        }
+        val lines = wrapText(text, 34)
+        val lineHeight = paint.fontSpacing
+        var y = graphicBottom + ((height - graphicBottom) - lines.size * lineHeight) / 2f + lineHeight
+        lines.forEach { line ->
+            canvas.drawText(line, width / 2f, y, paint)
+            y += lineHeight
+        }
         return bmp
     }
 
     private fun wrapText(text: String, maxChars: Int): List<String> {
-        val words = text.split(" ")
         val lines = mutableListOf<String>()
         var current = StringBuilder()
-        for (w in words) {
-            if (current.length + w.length + 1 > maxChars) {
+        for (word in text.split(Regex("\\s+"))) {
+            if (current.isNotEmpty() && current.length + word.length + 1 > maxChars) {
                 lines.add(current.toString())
                 current = StringBuilder()
             }
             if (current.isNotEmpty()) current.append(' ')
-            current.append(w)
+            current.append(word)
         }
         if (current.isNotEmpty()) lines.add(current.toString())
         return lines
@@ -94,86 +107,67 @@ object VideoGenerator {
         prompt: String,
         durationSeconds: Int = 12,
         style: String = "Cinematic",
-    ): Pair<Boolean, String?> {
-        return withContext(Dispatchers.IO) {
-            try {
-                val outDir = File(context.filesDir, "generated_videos")
-                if (!outDir.exists()) outDir.mkdirs()
+        graphicUri: String? = null,
+    ): Pair<Boolean, String?> = withContext(Dispatchers.IO) {
+        try {
+            val outDir = File(context.filesDir, "generated_videos").apply { mkdirs() }
+            val safeName = sanitizeFilename("$style-$prompt")
+            val imageFile = File(outDir, "$safeName.png")
+            val audioFile = File(outDir, "$safeName.wav")
+            val outFile = File(outDir, "$safeName-${durationSeconds}s.mp4")
 
-                val safeName = sanitizeFilename("${style.lowercase()}-${prompt}")
-                val imageFile = File(outDir, "${safeName}.png")
-                val audioFile = File(outDir, "${safeName}.wav")
-                val outFile = File(outDir, "${safeName}-${durationSeconds}s.mp4")
+            val sourceGraphic = graphicUri?.let { uriString ->
+                try {
+                    context.contentResolver.openInputStream(Uri.parse(uriString))?.use(BitmapFactory::decodeStream)
+                } catch (_: Exception) { null }
+            }
+            val poster = createBitmapWithText("${style.uppercase()}\n$prompt", sourceGraphic)
+            saveBitmapToFile(poster, imageFile)
+            poster.recycle()
+            sourceGraphic?.recycle()
 
-                val bmp = createBitmapWithText("${style.uppercase()}\n$prompt")
-                saveBitmapToFile(bmp, imageFile)
-
-                val latch = CountDownLatch(1)
-                val tts = TextToSpeech(context) { status ->
-                    if (status == TextToSpeech.SUCCESS) {
-                        tts.language = Locale.US
-                        val params = Bundle()
-                        params.putString(TextToSpeech.Engine.KEY_PARAM_UTTERANCE_ID, "utt1")
-
-                        tts.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
-                            override fun onStart(utteranceId: String) {}
-                            override fun onDone(utteranceId: String) { latch.countDown() }
-                            override fun onError(utteranceId: String) { latch.countDown() }
-                        })
-
-                        try {
-                            tts.synthesizeToFile(prompt, params, audioFile, "utt1")
-                        } catch (_: Exception) {
-                            try {
-                                @Suppress("DEPRECATION")
-                                val map = HashMap<String, String>()
-                                map[TextToSpeech.Engine.KEY_PARAM_UTTERANCE_ID] = "utt1"
-                                @Suppress("DEPRECATION")
-                                tts.synthesizeToFile(prompt, map as HashMap<String, String>, audioFile.absolutePath)
-                            } catch (_: Exception) {
-                                latch.countDown()
-                            }
-                        }
-                    } else {
+            val latch = CountDownLatch(1)
+            lateinit var tts: TextToSpeech
+            tts = TextToSpeech(context) { result ->
+                if (result == TextToSpeech.SUCCESS) {
+                    tts.language = Locale.US
+                    val params = Bundle().apply { putString(TextToSpeech.Engine.KEY_PARAM_UTTERANCE_ID, "video-narration") }
+                    tts.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
+                        override fun onStart(utteranceId: String) {}
+                        override fun onDone(utteranceId: String) { latch.countDown() }
+                        override fun onError(utteranceId: String) { latch.countDown() }
+                    })
+                    try {
+                        tts.synthesizeToFile(prompt, params, audioFile, "video-narration")
+                    } catch (_: Exception) {
                         latch.countDown()
                     }
-                }
-
-                latch.await()
-                try { tts.shutdown() } catch (_: Exception) {}
-
-                val cmd = listOf(
-                    "-y",
-                    "-loop", "1",
-                    "-i", imageFile.absolutePath,
-                    "-i", audioFile.absolutePath,
-                    "-c:v", "libx264",
-                    "-t", durationSeconds.toString(),
-                    "-pix_fmt", "yuv420p",
-                    "-c:a", "aac",
-                    "-shortest",
-                    outFile.absolutePath
-                ).joinToString(" ")
-
-                FFmpegKitConfig.setLogLevel(com.arthenica.ffmpegkit.LogLevel.AV_LOG_INFO)
-                val session = FFmpegKit.execute(cmd)
-                val returnCode = session.returnCode
-
-                if (returnCode.isValueSuccess) {
-                    Pair(true, outFile.absolutePath)
-                } else {
-                    Pair(false, session.failStackTrace ?: "Unknown ffmpeg error")
-                }
-            } catch (ex: Exception) {
-                Pair(false, ex.message)
+                } else latch.countDown()
             }
+            latch.await()
+            try { tts.shutdown() } catch (_: Exception) { }
+
+            val frames = durationSeconds * 30
+            val cmd = listOf(
+                "-y", "-loop", "1", "-i", imageFile.absolutePath,
+                "-i", audioFile.absolutePath,
+                "-vf", "zoompan=z='min(zoom+0.001,1.08)':d=$frames:s=1280x720:fps=30",
+                "-c:v", "libx264", "-t", durationSeconds.toString(),
+                "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", outFile.absolutePath
+            ).joinToString(" ")
+
+            FFmpegKitConfig.setLogLevel(com.arthenica.ffmpegkit.LogLevel.AV_LOG_INFO)
+            val session = FFmpegKit.execute(cmd)
+            if (session.returnCode.isValueSuccess) Pair(true, outFile.absolutePath)
+            else Pair(false, session.failStackTrace ?: "FFmpeg could not render the video")
+        } catch (ex: Exception) {
+            Pair(false, ex.message ?: "Video rendering failed")
         }
     }
 
-    private fun sanitizeFilename(text: String): String {
-        return text.trim().lowercase()
-            .replace(Regex("[^a-z0-9]+"), "-")
-            .trim('-')
-            .ifEmpty { "video" }
-    }
+    private fun sanitizeFilename(text: String): String = text.trim().lowercase()
+        .replace(Regex("[^a-z0-9]+"), "-")
+        .trim('-')
+        .take(64)
+        .ifEmpty { "video" }
 }
